@@ -1,0 +1,217 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+local Mouse = LocalPlayer:GetMouse()
+
+local boxWidth = 280
+local lineSpacing = 20
+
+local box = Drawing.new("Square")
+box.Filled = true
+box.Transparency = 0.5
+box.Color = Color3.new(0, 0, 0)
+box.Visible = true
+box.ZIndex = 1
+
+local textLines = {}
+local maxLines = 30  -- 최대 라인 수 넉넉히 확보
+
+for i = 1, maxLines do
+	local t = Drawing.new("Text")
+	t.Size = 16
+	t.Color = Color3.new(1, 1, 1)
+	t.Outline = true
+	t.Font = 2
+	t.Visible = false
+	t.ZIndex = 2
+	table.insert(textLines, t)
+end
+
+local function updateBoxHeight(lineCount)
+	local height = lineCount * lineSpacing + 10
+	box.Size = Vector2.new(boxWidth, height)
+end
+
+local dragging = false
+local dragStartPos = nil
+local mouseStartPos = nil
+
+box.Position = Vector2.new(Camera.ViewportSize.X - boxWidth - 20, 20)
+
+UserInputService.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		local mousePos = Vector2.new(Mouse.X, Mouse.Y)
+		if mousePos.X >= box.Position.X and mousePos.X <= box.Position.X + box.Size.X and
+		   mousePos.Y >= box.Position.Y and mousePos.Y <= box.Position.Y + box.Size.Y then
+			dragging = true
+			dragStartPos = box.Position
+			mouseStartPos = mousePos
+		end
+	end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		dragging = false
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+		local delta = Vector2.new(Mouse.X, Mouse.Y) - mouseStartPos
+		local newPos = dragStartPos + delta
+		box.Position = newPos
+		for i, t in ipairs(textLines) do
+			if t.Visible then
+				t.Position = Vector2.new(newPos.X + 5, newPos.Y + 5 + (i - 1) * lineSpacing)
+			end
+		end
+	end
+end)
+
+local function getGunInfoLines(target)
+	local lines = {}
+
+	-- 타겟 정보 없으면
+	if not target or not target:FindFirstChild("GunInventory") then
+		table.insert(lines, "")
+	else
+		table.insert(lines, target.Name .. "")
+
+		local gunInventory = target:FindFirstChild("GunInventory")
+		local gunObjects = gunInventory:GetChildren()
+
+		if #gunObjects == 0 then
+			table.insert(lines, "")
+		else
+			-- 총기별로 분류: 우선순위 3종 + 기타
+			local weaponOrder = { "AKM", "SVD", "Saiga", "Barret50" }
+			local weaponMap = {}
+			local others = {}
+
+			-- 총기별 ObjectValue 담기
+			for _, gunObj in ipairs(gunObjects) do
+				if gunObj:IsA("ObjectValue") and gunObj.Value then
+					local gunName = tostring(gunObj.Value)
+					if gunName == "AKM" or gunName == "SVD" or gunName == "Barret50" or gunName == "Saiga" then
+						weaponMap[gunName] = weaponMap[gunName] or {}
+						table.insert(weaponMap[gunName], gunObj)
+					else
+						table.insert(others, gunObj)
+					end
+				end
+			end
+
+			-- weaponOrder 순서대로 출력
+			for _, wname in ipairs(weaponOrder) do
+				if weaponMap[wname] then
+					for _, gunObj in ipairs(weaponMap[wname]) do
+						local scopeText = ""
+						local reticleObj = gunObj:FindFirstChild("AttachmentReticle")
+						if reticleObj and reticleObj:IsA("ObjectValue") and reticleObj.Value then
+							scopeText = tostring(reticleObj.Value) .. ""
+						end
+						table.insert(lines, wname .. " - " .. scopeText)
+
+						local mag = gunObj:FindFirstChild("BulletsInMagazine")
+						local reserve = gunObj:FindFirstChild("BulletsInReserve")
+						if mag and reserve and mag:IsA("IntValue") and reserve:IsA("IntValue") then
+							table.insert(lines, tostring(mag.Value) .. " / " .. tostring(reserve.Value))
+						end
+					end
+				end
+			end
+
+			-- 기타 총기 출력
+			for _, gunObj in ipairs(others) do
+				local gunName = tostring(gunObj.Value)
+				local scopeText = ""
+				local reticleObj = gunObj:FindFirstChild("AttachmentReticle")
+				if reticleObj and reticleObj:IsA("ObjectValue") and reticleObj.Value then
+					scopeText = tostring(reticleObj.Value) .. ""
+				end
+				table.insert(lines, gunName .. " - " .. scopeText)
+
+				local mag = gunObj:FindFirstChild("BulletsInMagazine")
+				local reserve = gunObj:FindFirstChild("BulletsInReserve")
+				if mag and reserve and mag:IsA("IntValue") and reserve:IsA("IntValue") then
+					table.insert(lines, tostring(mag.Value) .. " / " .. tostring(reserve.Value))
+				end
+			end
+		end
+	end
+
+	-- 구분선
+	table.insert(lines, "────────────")
+
+	-- 모든 플레이어 기준 총기 소유자 집계
+	local weaponCounts = {
+		["AKM"] = 0,
+		["SVD"] = 0,
+		["Saiga"] = 0,
+		["Barret50"] = 0
+	}
+
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player ~= LocalPlayer and player:FindFirstChild("GunInventory") then
+			local inv = player.GunInventory
+			for _, gunObj in ipairs(inv:GetChildren()) do
+				if gunObj:IsA("ObjectValue") and gunObj.Value then
+					local gunName = tostring(gunObj.Value)
+					if weaponCounts[gunName] ~= nil then
+						weaponCounts[gunName] = weaponCounts[gunName] + 1
+					end
+				end
+			end
+		end
+	end
+
+	-- 순서대로 출력
+	for _, wname in ipairs({"AKM", "SVD", "Saiga", "Barret50"}) do
+		table.insert(lines, wname .. " : " .. tostring(weaponCounts[wname]) .. ".")
+	end
+
+	return lines
+end
+
+local function getClosestPlayerToCenter()
+	local closestPlayer = nil
+	local closestDist = math.huge
+	local screenCenter = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+			local screenPos, onScreen = Camera:WorldToViewportPoint(player.Character.HumanoidRootPart.Position)
+			if onScreen then
+				local dist = (Vector2.new(screenPos.X, screenPos.Y) - screenCenter).Magnitude
+				if dist < closestDist then
+					closestDist = dist
+					closestPlayer = player
+				end
+			end
+		end
+	end
+
+	return closestPlayer
+end
+
+RunService.RenderStepped:Connect(function()
+	local target = getClosestPlayerToCenter()
+	local lines = getGunInfoLines(target)
+
+	updateBoxHeight(#lines)
+
+	for i, t in ipairs(textLines) do
+		t.Visible = false
+	end
+
+	for i, line in ipairs(lines) do
+		local t = textLines[i]
+		t.Text = line
+		t.Visible = true
+		t.Position = Vector2.new(box.Position.X + 5, box.Position.Y + 5 + (i - 1) * lineSpacing)
+	end
+end)
